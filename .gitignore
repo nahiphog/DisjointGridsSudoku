@@ -1,0 +1,5 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.source-sudokui/
+.source-diagonal-or-not/

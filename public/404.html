@@ -1,0 +1,10 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Redirecting…</title>
+<script>
+  // GitHub Pages serves this file for direct visits to client-side routes.
+  // Return to the Vite entry point and let the app restore the requested route.
+  const base = "/DisjointGridsSudoku";
+  const route = location.pathname.slice(base.length) || "/";
+  location.replace(base + "/?route=" + encodeURIComponent(route + location.search + location.hash));
+</script>

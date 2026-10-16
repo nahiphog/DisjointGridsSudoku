@@ -17,7 +17,7 @@ export const TECHNIQUE_DIFFICULTY: Record<Technique | "Brute Force", number> = {
 export type CandidateRemoval = { side: 0 | 1; row: number; column: number; digit: number };
 export type WalkthroughTechnique = Technique | "Brute Force";
 export type WalkthroughStep = { side: 0 | 1; row: number; column: number; digit: number; technique: WalkthroughTechnique; message: string; removed: CandidateRemoval[] };
-export type Walkthrough = { steps: WalkthroughStep[]; ratings: [number, number]; totalRating: number; tallies: [Record<string, number>, Record<string, number>] };
+export type Walkthrough = { steps: WalkthroughStep[]; solution: Pair; ratings: [number, number]; totalRating: number; tallies: [Record<string, number>, Record<string, number>] };
 const ALL = 0b111111111;
 export const emptyGrid = (): Grid => Array.from({ length: 9 }, () => Array(9).fill(0));
 export const clone = (g: Grid) => g.map(row => [...row]);
@@ -396,5 +396,5 @@ export function buildWalkthrough(puzzle: Pair, solution: Pair): Walkthrough {
     ratings[picked.side] += TECHNIQUE_DIFFICULTY[technique];
     preferred = picked.side === 0 ? 1 : 0;
   }
-  return { steps, ratings, totalRating: ratings[0] + ratings[1], tallies };
+  return { steps, solution: { left: clone(solution.left), right: clone(solution.right) }, ratings, totalRating: ratings[0] + ratings[1], tallies };
 }

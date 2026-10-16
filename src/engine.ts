@@ -15,7 +15,7 @@ export const TECHNIQUE_DIFFICULTY: Record<Technique | "Brute Force", number> = {
   "Templates": 1500, "Brute Force": 10000,
 };
 export type CandidateRemoval = { side: 0 | 1; row: number; column: number; digit: number };
-export type WalkthroughTechnique = "Full House" | "Naked Single" | "Hidden Single" | "Brute Force";
+export type WalkthroughTechnique = Technique | "Brute Force";
 export type WalkthroughStep = { side: 0 | 1; row: number; column: number; digit: number; technique: WalkthroughTechnique; message: string; removed: CandidateRemoval[] };
 export type Walkthrough = { steps: WalkthroughStep[]; ratings: [number, number]; totalRating: number; tallies: [Record<string, number>, Record<string, number>] };
 const ALL = 0b111111111;
@@ -220,12 +220,138 @@ function findLogicalPlacement(pair: Pair, open: OpenCell[], preferred: 0 | 1): P
   return hidden.length ? preferSide(hidden, preferred) : null;
 }
 
+type Elimination = { technique: WalkthroughTechnique; side: 0 | 1; removed: CandidateRemoval[]; message: string };
+const cellIndex = (row: number, column: number) => row * 9 + column;
+const bitFor = (digit: number) => 1 << (digit - 1);
+const maskOf = (options: number[]) => options.reduce((mask, digit) => mask | bitFor(digit), 0);
+const seesCell = (first: number, second: number) => first !== second && (Math.floor(first / 9) === Math.floor(second / 9) || first % 9 === second % 9 || box(Math.floor(first / 9), first % 9) === box(Math.floor(second / 9), second % 9));
+const choose = <T,>(items: T[], size: number): T[][] => {
+  const result: T[][] = [], visit = (from: number, chosen: T[]) => {
+    if (chosen.length === size) { result.push([...chosen]); return; }
+    for (let index = from; index <= items.length - (size - chosen.length); index++) { chosen.push(items[index]); visit(index + 1, chosen); chosen.pop(); }
+  }; visit(0, []); return result;
+};
+const makeElimination = (technique: WalkthroughTechnique, side: 0 | 1, removed: CandidateRemoval[], text: string): Elimination | null =>
+  removed.length ? { technique, side, removed, message: "Grid " + (side ? "B" : "A") + ": " + text } : null;
+
+function findLocked(states: number[][]): Elimination | null {
+  for (const side of [0, 1] as const) for (let digit = 1; digit <= 9; digit++) {
+    const bit = bitFor(digit);
+    for (let boxIndex = 0; boxIndex < 9; boxIndex++) {
+      const candidatesInBox = unitCells[18 + boxIndex].filter(([row, column]) => states[side][cellIndex(row, column)] & bit);
+      if (candidatesInBox.length < 2) continue;
+      const sameRow = candidatesInBox.every(([row]) => row === candidatesInBox[0][0]);
+      const sameColumn = candidatesInBox.every(([, column]) => column === candidatesInBox[0][1]);
+      if (!sameRow && !sameColumn) continue;
+      const line = sameRow ? unitCells[candidatesInBox[0][0]] : unitCells[9 + candidatesInBox[0][1]], removed: CandidateRemoval[] = [];
+      for (const [row, column] of line) if (box(row, column) !== boxIndex && states[side][cellIndex(row, column)] & bit) removed.push({ side, row, column, digit });
+      const action = makeElimination("Locked Candidates", side, removed, "Locked Candidates removes " + digit + " from the rest of a line.");
+      if (action) return action;
+    }
+    for (let lineIndex = 0; lineIndex < 18; lineIndex++) {
+      const candidatesInLine = unitCells[lineIndex].filter(([row, column]) => states[side][cellIndex(row, column)] & bit);
+      if (candidatesInLine.length < 2 || !candidatesInLine.every(([row, column]) => box(row, column) === box(candidatesInLine[0][0], candidatesInLine[0][1]))) continue;
+      const boxIndex = box(candidatesInLine[0][0], candidatesInLine[0][1]), removed: CandidateRemoval[] = [];
+      for (const [row, column] of unitCells[18 + boxIndex]) if (!unitCells[lineIndex].some(([r, c]) => r === row && c === column) && states[side][cellIndex(row, column)] & bit) removed.push({ side, row, column, digit });
+      const action = makeElimination("Locked Candidates", side, removed, "Locked Candidates removes " + digit + " from the rest of a box.");
+      if (action) return action;
+    }
+  }
+  return null;
+}
+
+function findSubset(states: number[][], hidden: boolean, size: 2 | 3 | 4): Elimination | null {
+  const tail = size === 2 ? "Pair" : size === 3 ? "Triple" : "Quadruple";
+  const technique = (hidden ? "Hidden " : "Naked ") + tail as WalkthroughTechnique;
+  for (const side of [0, 1] as const) for (const unit of unitCells) {
+    const cells = unit.map(([row, column]) => ({ row, column, mask: states[side][cellIndex(row, column)] })).filter(cell => cell.mask);
+    if (hidden) {
+      for (const digitsToKeep of choose([1,2,3,4,5,6,7,8,9], size)) {
+        const keep = digitsToKeep.reduce((mask, digit) => mask | bitFor(digit), 0);
+        const selected = cells.filter(cell => cell.mask & keep);
+        if (selected.length !== size) continue;
+        const removed: CandidateRemoval[] = [];
+        for (const cell of selected) for (const digit of bits(cell.mask & ~keep)) removed.push({ side, row: cell.row, column: cell.column, digit });
+        const action = makeElimination(technique, side, removed, technique + " restricts candidates in its unit.");
+        if (action) return action;
+      }
+    } else {
+      for (const selected of choose(cells.filter(cell => count(cell.mask) <= size), size)) {
+        const keep = selected.reduce((mask, cell) => mask | cell.mask, 0);
+        if (count(keep) !== size) continue;
+        const removed: CandidateRemoval[] = [];
+        for (const cell of cells) if (!selected.includes(cell)) for (const digit of bits(cell.mask & keep)) removed.push({ side, row: cell.row, column: cell.column, digit });
+        const action = makeElimination(technique, side, removed, technique + " removes its digits from the rest of a unit.");
+        if (action) return action;
+      }
+    }
+  }
+  return null;
+}
+
+function findXWing(states: number[][]): Elimination | null {
+  for (const side of [0, 1] as const) for (const transpose of [false, true]) for (let digit = 1; digit <= 9; digit++) {
+    const bit = bitFor(digit);
+    for (const lines of choose([0,1,2,3,4,5,6,7,8], 2)) {
+      const targets = lines.map(line => [0,1,2,3,4,5,6,7,8].filter(target => states[side][cellIndex(transpose ? target : line, transpose ? line : target)] & bit));
+      if (targets[0].length !== 2 || targets[0].join() !== targets[1].join()) continue;
+      const removed: CandidateRemoval[] = [];
+      for (const target of targets[0]) for (let line = 0; line < 9; line++) if (!lines.includes(line)) {
+        const row = transpose ? target : line, column = transpose ? line : target;
+        if (states[side][cellIndex(row, column)] & bit) removed.push({ side, row, column, digit });
+      }
+      const action = makeElimination("X-Wing", side, removed, "X-Wing on " + digit + " removes candidates outside its two lines.");
+      if (action) return action;
+    }
+  }
+  return null;
+}
+
+function findWing(states: number[][], technique: "XY-Wing" | "XYZ-Wing" | "W-Wing"): Elimination | null {
+  for (const side of [0, 1] as const) {
+    const masks = states[side], bivalue = [0,1,2,3,4,5,6,7,8].flatMap(row => [0,1,2,3,4,5,6,7,8].map(column => cellIndex(row, column))).filter(cell => count(masks[cell]) === 2);
+    const removals = (digit: number, required: number[], excluded: number[]) => bivalue.concat(Array.from({ length: 81 }, (_, cell) => cell)).filter((cell, index, all) => all.indexOf(cell) === index && !excluded.includes(cell) && (masks[cell] & bitFor(digit)) && required.every(other => seesCell(cell, other))).map(cell => ({ side, row: Math.floor(cell / 9), column: cell % 9, digit }));
+    if (technique === "XY-Wing") for (const pivot of bivalue) {
+      const [x, y] = bits(masks[pivot]), wings = bivalue.filter(cell => seesCell(cell, pivot));
+      for (const first of wings) for (const second of wings) {
+        if (first === second || !(masks[first] & bitFor(x))) continue;
+        const z = bits(masks[first]).find(digit => digit !== x);
+        if (!z || z === y || masks[second] !== (bitFor(y) | bitFor(z))) continue;
+        const action = makeElimination(technique, side, removals(z, [first, second], [pivot, first, second]), "XY-Wing removes " + z + " from cells seeing both pincers.");
+        if (action) return action;
+      }
+    }
+    if (technique === "XYZ-Wing") for (let pivot = 0; pivot < 81; pivot++) if (count(masks[pivot]) === 3) {
+      const wings = bivalue.filter(cell => seesCell(cell, pivot) && (masks[cell] & masks[pivot]) === masks[cell]);
+      for (const [first, second] of choose(wings, 2)) {
+        const shared = masks[first] & masks[second];
+        if (count(shared) !== 1 || (masks[first] | masks[second]) !== masks[pivot]) continue;
+        const z = bits(shared)[0], action = makeElimination(technique, side, removals(z, [pivot, first, second], [pivot, first, second]), "XYZ-Wing removes " + z + " from cells seeing its pivot and pincers.");
+        if (action) return action;
+      }
+    }
+    if (technique === "W-Wing") for (const [first, second] of choose(bivalue, 2)) {
+      if (masks[first] !== masks[second] || seesCell(first, second)) continue;
+      const [x, y] = bits(masks[first]);
+      for (const [link, eliminated] of [[x,y],[y,x]] as const) for (const unit of unitCells) {
+        const endpoints = unit.map(([row, column]) => cellIndex(row, column)).filter(cell => masks[cell] & bitFor(link));
+        if (endpoints.length !== 2 || endpoints.includes(first) || endpoints.includes(second) || !((seesCell(endpoints[0], first) && seesCell(endpoints[1], second)) || (seesCell(endpoints[1], first) && seesCell(endpoints[0], second)))) continue;
+        const action = makeElimination(technique, side, removals(eliminated, [first, second], [first, second, ...endpoints]), "W-Wing removes " + eliminated + " from cells seeing both bivalue cells.");
+        if (action) return action;
+      }
+    }
+  }
+  return null;
+}
+
 /** Builds a transparent replay from the clues to a verified paired solution. */
 export function buildWalkthrough(puzzle: Pair, solution: Pair): Walkthrough {
   const replay: Pair = { left: clone(puzzle.left), right: clone(puzzle.right) };
   const steps: WalkthroughStep[] = [];
   const tallies: [Record<string, number>, Record<string, number>] = [{}, {}];
   const ratings: [number, number] = [0, 0];
+  const candidateStates: [number[], number[]] = [Array(81).fill(0), Array(81).fill(0)];
+  let candidatesInitialized = false;
   let preferred: 0 | 1 = 0;
   while (true) {
     const open: Array<{ side: 0 | 1; row: number; column: number; options: number[] }> = [];
@@ -234,7 +360,22 @@ export function buildWalkthrough(puzzle: Pair, solution: Pair): Walkthrough {
       open.push({ side, row, column, options: candidates(replay, side, row, column) });
     }
     if (!open.length) break;
+    for (const item of open) {
+      const index = cellIndex(item.row, item.column), raw = maskOf(item.options);
+      candidateStates[item.side][index] = candidatesInitialized ? candidateStates[item.side][index] & raw : raw;
+      item.options = bits(candidateStates[item.side][index]);
+    }
+    candidatesInitialized = true;
     const logical = findLogicalPlacement(replay, open, preferred);
+    const advanced = logical ? null : (findLocked(candidateStates) ?? findSubset(candidateStates, false, 2) ?? findSubset(candidateStates, true, 2) ?? findSubset(candidateStates, false, 3) ?? findSubset(candidateStates, true, 3) ?? findSubset(candidateStates, false, 4) ?? findSubset(candidateStates, true, 4) ?? findXWing(candidateStates) ?? findWing(candidateStates, "XY-Wing") ?? findWing(candidateStates, "XYZ-Wing") ?? findWing(candidateStates, "W-Wing"));
+    if (advanced) {
+      for (const item of advanced.removed) candidateStates[item.side][cellIndex(item.row, item.column)] &= ~bitFor(item.digit);
+      const first = advanced.removed[0];
+      steps.push({ side: advanced.side, row: first.row, column: first.column, digit: 0, technique: advanced.technique, removed: advanced.removed, message: advanced.message });
+      tallies[advanced.side][advanced.technique] = (tallies[advanced.side][advanced.technique] ?? 0) + 1;
+      ratings[advanced.side] += TECHNIQUE_DIFFICULTY[advanced.technique];
+      continue;
+    }
     const fallback = [...open].sort((a, b) => (a.side === preferred ? -1 : 1) || a.options.length - b.options.length || a.row - b.row || a.column - b.column)[0];
     const picked = logical ?? fallback;
     const digit = logical?.digit ?? (picked.side ? solution.right : solution.left)[picked.row][picked.column];

@@ -104,38 +104,38 @@ export function countSolutions(input: Pair, limit = 2) {
 
 export const hasUniqueSolution = (pair: Pair) => countSolutions(pair) === 1;
 
-export function generate(matchedClues = false, splitClues = false) {
+export type DiggingMethod = "single" | "matched" | "rotational";
+
+export function generate(method: DiggingMethod = "single") {
   const shuffle = <T,>(items: T[]) => [...items].sort(() => Math.random() - .5);
   const positions = Array.from({ length: 81 }, (_, index) => [Math.floor(index / 9), index % 9] as const);
   const solved = solve({ left: emptyGrid(), right: emptyGrid() }, true)!;
   const puzzle: Pair = { left: clone(solved.left), right: clone(solved.right) };
 
-  if (splitClues) {
-    // Make each matching pair contain at most one clue, while preserving uniqueness.
-    for (const [row, column] of shuffle(positions)) {
-      const firstSide: 0 | 1 = Math.random() < .5 ? 0 : 1;
-      const sides: (0 | 1)[] = [firstSide, firstSide ? 0 : 1];
-      let removed = false;
-      for (const side of sides) {
-        const grid = side ? puzzle.right : puzzle.left;
-        const digit = grid[row][column]; grid[row][column] = 0;
-        if (hasUniqueSolution(puzzle)) { removed = true; break; }
-        grid[row][column] = digit;
-      }
-      // A fully-clued pair always has a unique completion; this guard is defensive.
-      if (!removed) throw new Error("Unable to establish split clues with a unique solution.");
-    }
-  }
-
-  // One shuffled pass is enough: after a clue fails uniqueness, removing more
-  // clues cannot make that same removal uniquely solvable again.
-  if (matchedClues) {
+  // One shuffled pass is enough: after a clue set fails uniqueness, removing
+  // further clues cannot make that same removal uniquely solvable again.
+  if (method === "matched") {
     for (const [row, column] of shuffle(positions)) {
       if (!puzzle.left[row][column] && !puzzle.right[row][column]) continue;
       const left = puzzle.left[row][column], right = puzzle.right[row][column];
       puzzle.left[row][column] = 0; puzzle.right[row][column] = 0;
       if (hasUniqueSolution(puzzle)) continue;
       puzzle.left[row][column] = left; puzzle.right[row][column] = right;
+    }
+  } else if (method === "rotational") {
+    // Test each 180-degree rotational orbit once for each grid. The centre
+    // cell is its own orbit, so it is (correctly) tested as one clue.
+    const orbits = ([0, 1] as const).flatMap(side => positions
+      .filter(([row, column]) => row * 9 + column <= (8 - row) * 9 + (8 - column))
+      .map(([row, column]) => [side, row, column] as const));
+    for (const [side, row, column] of shuffle(orbits)) {
+      const grid = side ? puzzle.right : puzzle.left;
+      const mirrorRow = 8 - row, mirrorColumn = 8 - column;
+      const first = grid[row][column], second = grid[mirrorRow][mirrorColumn];
+      if (!first || !second) continue;
+      grid[row][column] = 0; grid[mirrorRow][mirrorColumn] = 0;
+      if (hasUniqueSolution(puzzle)) continue;
+      grid[row][column] = first; grid[mirrorRow][mirrorColumn] = second;
     }
   } else {
     const clues = shuffle((([0, 1] as const).flatMap(side => positions.map(([row, column]) => [side, row, column] as const))));

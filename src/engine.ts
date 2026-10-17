@@ -112,6 +112,25 @@ export function generate(method: DiggingMethod = "single") {
   const solved = solve({ left: emptyGrid(), right: emptyGrid() }, true)!;
   const puzzle: Pair = { left: clone(solved.left), right: clone(solved.right) };
 
+  if (method === "single") {
+    // Establish the split-clue invariant first: every matching coordinate
+    // keeps at most one clue across the two grids. Subsequent single-cell
+    // digging only removes clues, so it cannot violate this invariant.
+    for (const [row, column] of shuffle(positions)) {
+      const firstSide: 0 | 1 = Math.random() < .5 ? 0 : 1;
+      const sides: (0 | 1)[] = [firstSide, firstSide ? 0 : 1];
+      let split = false;
+      for (const side of sides) {
+        const grid = side ? puzzle.right : puzzle.left;
+        const digit = grid[row][column];
+        grid[row][column] = 0;
+        if (hasUniqueSolution(puzzle)) { split = true; break; }
+        grid[row][column] = digit;
+      }
+      if (!split) throw new Error("Unable to establish the split-clue invariant.");
+    }
+  }
+
   // One shuffled pass is enough: after a clue set fails uniqueness, removing
   // further clues cannot make that same removal uniquely solvable again.
   if (method === "matched") {
@@ -147,7 +166,12 @@ export function generate(method: DiggingMethod = "single") {
       grid[row][column] = digit;
     }
   }
-  return { puzzle, solution: solved, solutionCount: countSolutions(puzzle) };
+  const solutionCount = countSolutions(puzzle);
+  if (method === "single" && positions.some(([row, column]) => Boolean(puzzle.left[row][column]) && Boolean(puzzle.right[row][column]))) {
+    throw new Error("Split-clue generation produced matching givens.");
+  }
+  if (solutionCount !== 1) throw new Error("Generated puzzle does not have a unique solution.");
+  return { puzzle, solution: solved, solutionCount };
 }
 
 /** Removes every individually removable clue from an already unique paired puzzle. */

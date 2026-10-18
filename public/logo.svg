@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">Person holding two Sudoku papers</title>
+  <rect width="64" height="64" rx="14" fill="#e9fbf1"/>
+  <g fill="none" stroke="#087f5b" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="32" cy="16" r="6" stroke-width="4"/>
+    <path d="M32 23v18m0 0-10 13m10-13 10 13M32 29l-13 7m13-7 13 7" stroke-width="4"/>
+    <path d="M10 19h15v18H10zM39 19h15v18H39z" fill="#fff" stroke-width="3"/>
+    <path d="M14 25h7m-7 5h7m22-5h7m-7 5h7" stroke-width="2"/>
+  </g>
+</svg>

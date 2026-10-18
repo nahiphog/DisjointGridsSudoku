@@ -104,7 +104,7 @@ export function countSolutions(input: Pair, limit = 2) {
 
 export const hasUniqueSolution = (pair: Pair) => countSolutions(pair) === 1;
 
-export type DiggingMethod = "single" | "matched" | "rotational";
+export type DiggingMethod = "single" | "matched" | "rotational" | "quadruple";
 
 export function generate(method: DiggingMethod = "single") {
   const shuffle = <T,>(items: T[]) => [...items].sort(() => Math.random() - .5);
@@ -141,6 +141,23 @@ export function generate(method: DiggingMethod = "single") {
       if (hasUniqueSolution(puzzle)) continue;
       puzzle.left[row][column] = left; puzzle.right[row][column] = right;
     }
+  } else if (method === "quadruple") {
+    // Remove the two rotationally opposite positions from both grids as one
+    // group. This preserves matching clue positions and 180° symmetry in
+    // each grid. At the centre, the rotational pair is one cell, so the
+    // group correctly contains two cells rather than four duplicates.
+    const orbits = positions.filter(([row, column]) => row * 9 + column <= (8 - row) * 9 + (8 - column));
+    for (const [row, column] of shuffle(orbits)) {
+      const mirrorRow = 8 - row, mirrorColumn = 8 - column;
+      const coordinates = row === mirrorRow && column === mirrorColumn
+        ? [[row, column] as const]
+        : [[row, column] as const, [mirrorRow, mirrorColumn] as const];
+      const cells = ([0, 1] as const).flatMap(side => coordinates.map(([r, c]) => ({ grid: side ? puzzle.right : puzzle.left, row: r, column: c, digit: (side ? puzzle.right : puzzle.left)[r][c] })));
+      if (cells.some(cell => !cell.digit)) continue;
+      cells.forEach(cell => { cell.grid[cell.row][cell.column] = 0; });
+      if (hasUniqueSolution(puzzle)) continue;
+      cells.forEach(cell => { cell.grid[cell.row][cell.column] = cell.digit; });
+    }
   } else if (method === "rotational") {
     // Test each 180-degree rotational orbit once for each grid. The centre
     // cell is its own orbit, so it is (correctly) tested as one clue.
@@ -170,6 +187,12 @@ export function generate(method: DiggingMethod = "single") {
   if (method === "single" && positions.some(([row, column]) => Boolean(puzzle.left[row][column]) && Boolean(puzzle.right[row][column]))) {
     throw new Error("Split-clue generation produced matching givens.");
   }
+  if (method === "quadruple" && positions.some(([row, column]) => {
+    const mirrorRow = 8 - row, mirrorColumn = 8 - column;
+    return Boolean(puzzle.left[row][column]) !== Boolean(puzzle.right[row][column])
+      || Boolean(puzzle.left[row][column]) !== Boolean(puzzle.left[mirrorRow][mirrorColumn])
+      || Boolean(puzzle.right[row][column]) !== Boolean(puzzle.right[mirrorRow][mirrorColumn]);
+  })) throw new Error("Quadruple digging produced an invalid clue pattern.");
   if (solutionCount !== 1) throw new Error("Generated puzzle does not have a unique solution.");
   return { puzzle, solution: solved, solutionCount };
 }

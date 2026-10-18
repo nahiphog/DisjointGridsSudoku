@@ -16,7 +16,7 @@ export const TECHNIQUE_DIFFICULTY: Record<Technique | "Brute Force", number> = {
 };
 export type CandidateRemoval = { side: 0 | 1; row: number; column: number; digit: number };
 export type WalkthroughTechnique = Technique | "Brute Force";
-export type WalkthroughStep = { side: 0 | 1; row: number; column: number; digit: number; technique: WalkthroughTechnique; message: string; removed: CandidateRemoval[] };
+export type WalkthroughStep = { kind: "placement" | "elimination"; side: 0 | 1; row: number; column: number; digit: number; technique: WalkthroughTechnique; message: string; removed: CandidateRemoval[] };
 export type Walkthrough = { steps: WalkthroughStep[]; solution: Pair; ratings: [number, number]; totalRating: number; tallies: [Record<string, number>, Record<string, number>] };
 const ALL = 0b111111111;
 export const emptyGrid = (): Grid => Array.from({ length: 9 }, () => Array(9).fill(0));
@@ -414,11 +414,16 @@ export function buildWalkthrough(puzzle: Pair, solution: Pair): Walkthrough {
     }
     candidatesInitialized = true;
     const logical = findLogicalPlacement(replay, open, preferred);
+    for (const side of [0, 1] as const) for (let row = 0; row < 9; row++) for (let column = 0; column < 9; column++) {
+      if ((side ? replay.right : replay.left)[row][column]) candidateStates[side][cellIndex(row, column)] = 0;
+    }
     const advanced = logical ? null : (findLocked(candidateStates) ?? findSubset(candidateStates, false, 2) ?? findSubset(candidateStates, true, 2) ?? findSubset(candidateStates, false, 3) ?? findSubset(candidateStates, true, 3) ?? findSubset(candidateStates, false, 4) ?? findSubset(candidateStates, true, 4) ?? findXWing(candidateStates) ?? findWing(candidateStates, "XY-Wing") ?? findWing(candidateStates, "XYZ-Wing") ?? findWing(candidateStates, "W-Wing"));
     if (advanced) {
-      for (const item of advanced.removed) candidateStates[item.side][cellIndex(item.row, item.column)] &= ~bitFor(item.digit);
-      const first = advanced.removed[0];
-      steps.push({ side: advanced.side, row: first.row, column: first.column, digit: 0, technique: advanced.technique, removed: advanced.removed, message: advanced.message });
+      const removed = advanced.removed.filter(item => !(item.side ? replay.right : replay.left)[item.row][item.column] && Boolean(candidateStates[item.side][cellIndex(item.row, item.column)] & bitFor(item.digit)));
+      if (!removed.length) continue;
+      for (const item of removed) candidateStates[item.side][cellIndex(item.row, item.column)] &= ~bitFor(item.digit);
+      const first = removed[0];
+      steps.push({ kind: "elimination", side: advanced.side, row: first.row, column: first.column, digit: 0, technique: advanced.technique, removed, message: advanced.message });
       tallies[advanced.side][advanced.technique] = (tallies[advanced.side][advanced.technique] ?? 0) + 1;
       ratings[advanced.side] += TECHNIQUE_DIFFICULTY[advanced.technique];
       continue;
@@ -428,7 +433,9 @@ export function buildWalkthrough(puzzle: Pair, solution: Pair): Walkthrough {
     const digit = logical?.digit ?? (picked.side ? solution.right : solution.left)[picked.row][picked.column];
     const technique: WalkthroughTechnique = logical?.technique ?? "Brute Force";
     const before = new Map(open.map(item => [item.side + "-" + item.row + "-" + item.column, item.options]));
+    if ((picked.side ? replay.right : replay.left)[picked.row][picked.column]) throw new Error("Walkthrough attempted to overwrite a filled cell.");
     (picked.side ? replay.right : replay.left)[picked.row][picked.column] = digit;
+    candidateStates[picked.side][cellIndex(picked.row, picked.column)] = 0;
     const removed: CandidateRemoval[] = [];
     for (const side of [0, 1] as const) for (let row = 0; row < 9; row++) for (let column = 0; column < 9; column++) {
       if ((side ? replay.right : replay.left)[row][column]) continue;
@@ -438,7 +445,7 @@ export function buildWalkthrough(puzzle: Pair, solution: Pair): Walkthrough {
       prior.filter(value => !current.includes(value)).forEach(value => removed.push({ side, row, column, digit: value }));
     }
     const label = picked.side ? "Grid B" : "Grid A";
-    steps.push({ ...picked, digit, technique, removed, message: `${label}: r${picked.row + 1}c${picked.column + 1} = ${digit} (${technique}).` });
+    steps.push({ kind: "placement", ...picked, digit, technique, removed, message: `${label}: r${picked.row + 1}c${picked.column + 1} = ${digit} (${technique}).` });
     tallies[picked.side][technique] = (tallies[picked.side][technique] ?? 0) + 1;
     ratings[picked.side] += TECHNIQUE_DIFFICULTY[technique];
     preferred = picked.side === 0 ? 1 : 0;

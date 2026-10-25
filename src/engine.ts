@@ -315,6 +315,10 @@ function findSubset(states: number[][], hidden: boolean, size: 2 | 3 | 4): Elimi
     if (hidden) {
       for (const digitsToKeep of choose([1,2,3,4,5,6,7,8,9], size)) {
         const keep = digitsToKeep.reduce((mask, digit) => mask | bitFor(digit), 0);
+        // A hidden subset needs every named digit to exist in the unit.  Without
+        // this guard, an absent digit can pad a single confined digit into a
+        // fake pair/triple/quadruple and remove a valid candidate.
+        if (!digitsToKeep.every(digit => cells.some(cell => cell.mask & bitFor(digit)))) continue;
         const selected = cells.filter(cell => cell.mask & keep);
         if (selected.length !== size) continue;
         const removed: CandidateRemoval[] = [];
